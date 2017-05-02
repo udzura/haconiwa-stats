@@ -1,0 +1,50 @@
+# -*- mode: ruby -*-
+haconiwa = Haconiwa.define do |config|
+  config.name = "stats-tester" # to be hostname
+  config.init_command = ["/usr/bin/ruby", "-e", "def fib(n);n<2?1:fib(n-2)+fib(n-1);end;loop{puts fib(rand(32));sleep rand(32)}"]
+  config.daemonize!
+
+  root = Pathname.new("/var/lib/haconiwa/stats-tester")
+  config.mount_independent "procfs"
+  config.mount_independent "sysfs"
+  config.mount_independent "devtmpfs"
+  config.mount_independent "devpts"
+  config.chroot_to root
+
+  config.namespace.unshare "mount"
+  config.namespace.unshare "ipc"
+  config.namespace.unshare "uts"
+  config.namespace.unshare "pid"
+
+  config.bootstrap do |b|
+    b.strategy = 'debootstrap'
+    b.variant = 'minbase'
+    b.debian_release = 'stretch'
+  end
+
+  config.provision do |p|
+    p.run_shell 'apt-get -y update'
+    p.run_shell 'apt-get -y install ruby'
+  end
+
+  config.cgroup :v1 do |cgroup|
+    cgroup["cpuset.mems"] = "0"
+    cgroup["cpuset.cpus"] = "0"
+    cgroup["cpu.cfs_period_us"] = 100000
+    cgroup["cpu.cfs_quota_us"]  =  30000
+    cgroup["memory.limit_in_bytes"] = 128 * 1024 * 1024 # 128MB
+  end
+
+  config.add_general_hook :before_start_wait do |base|
+    # memory.swappiness unsupported...
+    if system "echo 0 > /sys/fs/cgroup/memory/#{base.name}/memory.swappiness"
+      Haconiwa::Logger.puts "memory.swappiness set to 0"
+    end
+  end
+
+  if ENV['ENABLE_CGROUP_V2_IO']
+    config.cgroup :v2 do |cgroup|
+      cgroup["io.max"] = "8:0 rbps=#{1024 ** 2} wbps=#{1024 ** 2}"
+    end
+  end
+end
